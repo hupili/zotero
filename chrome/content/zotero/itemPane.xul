@@ -73,6 +73,7 @@
 					<tab id="zotero-editpane-notes-tab" label="&zotero.tabs.notes.label;"/>
 					<tab id="zotero-editpane-tags-tab" label="&zotero.tabs.tags.label;"/>
 					<tab id="zotero-editpane-related-tab" label="&zotero.tabs.related.label;"/>
+					<tab id="zotero-editpane-collection-tab" label="&zotero.tabs.collection.label;"/>
 				</tabs>
 				<tabpanels id="zotero-view-item" flex="1">
 					<tabpanel>
@@ -101,6 +102,14 @@
 					
 					<tabpanel>
 						<relatedbox id="zotero-editpane-related" flex="1"/>
+					</tabpanel>
+
+					<tabpanel>
+						<vbox>
+							<label id="collection-label" value="Item appears in collections:"/>
+							<vbox id="item-in-collection-box">	
+							</vbox>
+						</vbox>
 					</tabpanel>
 				</tabpanels>
 			</tabbox>

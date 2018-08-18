@@ -24,7 +24,7 @@
 */
 
 var ZoteroItemPane = new function() {
-    var _lastItem, _itemBox, _notesLabel, _notesButton, _notesList, _tagsBox, _relatedBox;
+    var _lastItem, _itemBox, _notesLabel, _notesButton, _notesList, _tagsBox, _relatedBox, _collectionBox;
     var _selectedNoteID;
     var _translationTarget;
     var _noteIDs;
@@ -47,145 +47,197 @@ var ZoteroItemPane = new function() {
         _notesList = document.getElementById('zotero-editpane-dynamic-notes');
         _tagsBox = document.getElementById('zotero-editpane-tags');
         _relatedBox = document.getElementById('zotero-editpane-related');
+        _collectionBox = document.getElementById('item-in-collection-box');
 
         this._unregisterID = Zotero.Notifier.registerObserver(this, ['item'], 'itemPane');
     }
 
 
     this.onUnload = function() {
-            Zotero.Notifier.unregisterObserver(this._unregisterID);
-        },
+        Zotero.Notifier.unregisterObserver(this._unregisterID);
+    }
 
+    /*
+     * Load a top-level item
+     */
+    this.viewItem = Zotero.Promise.coroutine(function*(item, mode, index) {
+        if (!index) {
+            index = 0;
+        }
 
-        /*
-         * Load a top-level item
-         */
-        this.viewItem = Zotero.Promise.coroutine(function*(item, mode, index) {
-            if (!index) {
-                index = 0;
-            }
+        Zotero.debug('Viewing item in pane ' + index);
 
-            Zotero.debug('Viewing item in pane ' + index);
+        switch (index) {
+            case 0:
+                var box = _itemBox;
+                break;
 
+            case 2:
+                var box = _tagsBox;
+                break;
+
+            case 3:
+                var box = _relatedBox;
+                break;
+
+            case 4:
+                var box = _collectionBox;
+                break;
+        }
+
+        // Force blur() when clicking off a textbox to another item in middle
+        // pane, since for some reason it's not being called automatically
+        if (_lastItem && _lastItem != item) {
             switch (index) {
                 case 0:
-                    var box = _itemBox;
-                    break;
-
                 case 2:
-                    var box = _tagsBox;
-                    break;
-
-                case 3:
-                    var box = _relatedBox;
+                    yield box.blurOpenField();
+                    // DEBUG: Currently broken
+                    //box.scrollToTop();
                     break;
             }
+        }
 
-            // Force blur() when clicking off a textbox to another item in middle
-            // pane, since for some reason it's not being called automatically
-            if (_lastItem && _lastItem != item) {
-                switch (index) {
-                    case 0:
-                    case 2:
-                        yield box.blurOpenField();
-                        // DEBUG: Currently broken
-                        //box.scrollToTop();
-                        break;
+        _lastItem = item;
+
+        var viewBox = document.getElementById('zotero-view-item');
+        viewBox.classList.remove('no-tabs');
+
+        if (index == 0) {
+            // Info tab
+            document.getElementById('zotero-editpane-tabs').setAttribute('hidden', item.isFeedItem);
+
+            if (item.isFeedItem) {
+                viewBox.classList.add('no-tabs');
+
+                let lastTranslationTarget = Zotero.Prefs.get('feeds.lastTranslationTarget');
+                if (lastTranslationTarget) {
+                    let id = parseInt(lastTranslationTarget.substr(1));
+                    if (lastTranslationTarget[0] == "L") {
+                        _translationTarget = Zotero.Libraries.get(id);
+                    } else if (lastTranslationTarget[0] == "C") {
+                        _translationTarget = Zotero.Collections.get(id);
+                    }
+                }
+                if (!_translationTarget) {
+                    _translationTarget = Zotero.Libraries.userLibrary;
+                }
+                this.setTranslateButton();
+            }
+        } else if (index == 1) {
+            // Note tab
+            var editable = ZoteroPane_Local.canEdit();
+            _notesButton.hidden = !editable;
+
+            while (_notesList.hasChildNodes()) {
+                _notesList.removeChild(_notesList.firstChild);
+            }
+
+            _noteIDs = new Set();
+            let notes = yield Zotero.Items.getAsync(item.getNotes());
+            if (notes.length) {
+                for (var i = 0; i < notes.length; i++) {
+                    let note = notes[i];
+                    let id = notes[i].id;
+
+                    var icon = document.createElement('image');
+                    icon.className = "zotero-box-icon";
+                    icon.setAttribute('src', `chrome://zotero/skin/treeitem-note${Zotero.hiDPISuffix}.png`);
+
+                    var label = document.createElement('label');
+                    label.className = "zotero-box-label";
+                    var title = note.getNoteTitle();
+                    title = title ? title : Zotero.getString('pane.item.notes.untitled');
+                    label.setAttribute('value', title);
+                    label.setAttribute('flex', '1'); //so that the long names will flex smaller
+                    label.setAttribute('crop', 'end');
+
+                    var box = document.createElement('box');
+                    box.setAttribute('class', 'zotero-clicky');
+                    box.addEventListener('click', function() { ZoteroPane_Local.selectItem(id); });
+                    box.appendChild(icon);
+                    box.appendChild(label);
+
+                    if (editable) {
+                        var removeButton = document.createElement('label');
+                        removeButton.setAttribute("value", "-");
+                        removeButton.setAttribute("class", "zotero-clicky zotero-clicky-minus");
+                        removeButton.addEventListener('click', function() { ZoteroItemPane.removeNote(id); });
+                    }
+
+                    var row = document.createElement('row');
+                    row.appendChild(box);
+                    if (editable) {
+                        row.appendChild(removeButton);
+                    }
+
+                    _notesList.appendChild(row);
+                    _noteIDs.add(id);
                 }
             }
 
-            _lastItem = item;
+            _updateNoteCount();
+            return;
+        }
 
-            var viewBox = document.getElementById('zotero-view-item');
-            viewBox.classList.remove('no-tabs');
+        if (mode) {
+            box.mode = mode;
 
-            if (index == 0) {
-                document.getElementById('zotero-editpane-tabs').setAttribute('hidden', item.isFeedItem);
+            if (box.mode == 'view') {
+                box.hideEmptyFields = true;
+            }
+        } else {
+            box.mode = 'edit';
+        }
 
-                if (item.isFeedItem) {
-                    viewBox.classList.add('no-tabs');
+        box.item = item;
 
-                    let lastTranslationTarget = Zotero.Prefs.get('feeds.lastTranslationTarget');
-                    if (lastTranslationTarget) {
-                        let id = parseInt(lastTranslationTarget.substr(1));
-                        if (lastTranslationTarget[0] == "L") {
-                            _translationTarget = Zotero.Libraries.get(id);
-                        } else if (lastTranslationTarget[0] == "C") {
-                            _translationTarget = Zotero.Collections.get(id);
-                        }
-                    }
-                    if (!_translationTarget) {
-                        _translationTarget = Zotero.Libraries.userLibrary;
-                    }
-                    this.setTranslateButton();
-                }
-            } else if (index == 1) {
-                var editable = ZoteroPane_Local.canEdit();
-                _notesButton.hidden = !editable;
-
-                while (_notesList.hasChildNodes()) {
-                    _notesList.removeChild(_notesList.firstChild);
-                }
-
-                _noteIDs = new Set();
-                let notes = yield Zotero.Items.getAsync(item.getNotes());
-                if (notes.length) {
-                    for (var i = 0; i < notes.length; i++) {
-                        let note = notes[i];
-                        let id = notes[i].id;
-
-                        var icon = document.createElement('image');
-                        icon.className = "zotero-box-icon";
-                        icon.setAttribute('src', `chrome://zotero/skin/treeitem-note${Zotero.hiDPISuffix}.png`);
-
+        function getCollectionSequence(collectionID, currentSuffix) {
+            var sql = "SELECT collectionID, collectionName, parentCollectionId FROM collections WHERE collectionID=?";
+            var sqlParams = [collectionID];
+            // var r = await Zotero.DB.columnQueryAsync(sql, sqlParams);
+            // console.log(r);
+            // return r;
+            return Zotero.DB.queryAsync(sql, sqlParams)
+                .then(r => {
+                    // Zotero.debug('DB query return:')
+                    // Zotero.debug(r[0].collectionID);
+                    // Zotero.debug(r[0].collectionName);
+                    // Zotero.debug(r[0].parentCollectionID);
+                    var name = r[0].collectionName;
+                    var pID = r[0].parentCollectionID;
+                    var fullName = name + '/' + currentSuffix;
+                    if (pID) {
+                        return getCollectionSequence(pID, fullName);
+                    } else {
+                        Zotero.debug('Collection: ' + fullName)
                         var label = document.createElement('label');
-                        label.className = "zotero-box-label";
-                        var title = note.getNoteTitle();
-                        title = title ? title : Zotero.getString('pane.item.notes.untitled');
-                        label.setAttribute('value', title);
-                        label.setAttribute('flex', '1'); //so that the long names will flex smaller
-                        label.setAttribute('crop', 'end');
-
-                        var box = document.createElement('box');
-                        box.setAttribute('class', 'zotero-clicky');
-                        box.addEventListener('click', function() { ZoteroPane_Local.selectItem(id); });
-                        box.appendChild(icon);
-                        box.appendChild(label);
-
-                        if (editable) {
-                            var removeButton = document.createElement('label');
-                            removeButton.setAttribute("value", "-");
-                            removeButton.setAttribute("class", "zotero-clicky zotero-clicky-minus");
-                            removeButton.addEventListener('click', function() { ZoteroItemPane.removeNote(id); });
-                        }
-
-                        var row = document.createElement('row');
-                        row.appendChild(box);
-                        if (editable) {
-                            row.appendChild(removeButton);
-                        }
-
-                        _notesList.appendChild(row);
-                        _noteIDs.add(id);
+                        label.setAttribute('value', '- ' + fullName);
+                        _collectionBox.appendChild(label);
+                        return fullName
                     }
-                }
+                });
+        }
 
-                _updateNoteCount();
-                return;
+        function clearCollectionSequence() {
+            while (_collectionBox.firstChild) {
+                _collectionBox.removeChild(_collectionBox.firstChild);
             }
+        }
 
-            if (mode) {
-                box.mode = mode;
+        var itemIDs = ZoteroPane_Local.getSelectedItems(true);
+        Zotero.debug('itemIDs:')
+        Zotero.debug(itemIDs);
+        Zotero.Promise.coroutine(function*() {
+            Zotero.debug('in co routine');
+            var collectionIDs = yield Zotero.Collections.getCollectionsContainingItems(itemIDs, true);
+            Zotero.debug('Show fullName of collections:');
+            clearCollectionSequence();
+            collectionIDs.map(id => getCollectionSequence(id, ''));
+            // var collections = Zotero.Collections.getCollectionsContainingItems(itemIDs, true);
+        })();
 
-                if (box.mode == 'view') {
-                    box.hideEmptyFields = true;
-                }
-            } else {
-                box.mode = 'edit';
-            }
-
-            box.item = item;
-        });
+    });
 
 
     this.notify = Zotero.Promise.coroutine(function*(action, type, ids, extraData) {
